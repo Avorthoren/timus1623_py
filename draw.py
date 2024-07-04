@@ -1,8 +1,5 @@
-import functools
-import math
-import random
 import tkinter
-from typing import Callable, Protocol, Optional
+from typing import Callable
 
 from template import NodeIndex, Template, DrawTemplate, RectTemplate, RoadTemplate
 from utils import Pos
@@ -93,10 +90,6 @@ def show(drawer: Drawer_T, *args, **kwargs) -> None:
 
 	drawer(canvas, *args, **kwargs)
 
-	# print(canvas.winfo_y(), canvas.winfo_x())
-	# print(canvas.winfo_height(), canvas.winfo_width())
-	# print(canvas.winfo_reqheight(), canvas.winfo_reqwidth())
-
 	main_window.mainloop()
 
 
@@ -106,8 +99,6 @@ def test_draw(canvas: tkinter.Canvas, x1: float, y1: float, x2: float, y2: float
 
 
 def main():
-	# show(test_draw, 10.5, 10, MAX_W-100, MAX_H-10, fill="black")
-
 	logic_template = Template(rooms=3, doors=6, plain_links=(
 		(NodeIndex(0, 0), NodeIndex(0, 1)),
 		(NodeIndex(0, 0), NodeIndex(1, 0)),
@@ -115,7 +106,21 @@ def main():
 		(NodeIndex(3, 3), NodeIndex(0, 0)),
 		(NodeIndex(1, 4), NodeIndex(1, 5))
 	))
-	show(draw_template, logic_template, depth=3)
+
+	# logic_template = Template(rooms=1, doors=12, plain_links=(
+	# 	(NodeIndex(0, 0), NodeIndex(1, 1)),
+	# 	(NodeIndex(0, 1), NodeIndex(0, 2)),
+	# 	(NodeIndex(1, 2), NodeIndex(1, 3)),
+	# 	(NodeIndex(0, 3), NodeIndex(0, 4)),
+	# 	(NodeIndex(1, 4), NodeIndex(1, 5)),
+	# 	(NodeIndex(0, 5), NodeIndex(0, 6)),
+	# 	(NodeIndex(1, 6), NodeIndex(1, 7)),
+	# 	(NodeIndex(0, 7), NodeIndex(0, 8)),
+	# 	(NodeIndex(1, 8), NodeIndex(1, 9)),
+	# 	(NodeIndex(0, 9), NodeIndex(0, 10)),
+	# 	(NodeIndex(1, 10), NodeIndex(0, 11)),
+	# ))
+	show(draw_template, logic_template, depth=4)
 
 
 if __name__ == "__main__":

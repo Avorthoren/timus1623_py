@@ -388,7 +388,7 @@ class DrawTemplate:
 		room_and_gap = room_relative_size + gap
 		# In orthogonal direction we will have excess of the space, so will
 		# center our rooms by adding `excess` gap from each side.
-		excess = (self._ZOOM_FACTOR - room_and_gap * other_count - gap) / 2
+		excess = (self._ZOOM_FACTOR - room_and_gap * other_count + gap) / 2
 
 		# Distance from the edge of the outer room to the closest inner room.
 		PADDING = (1 - self._ZOOM_FACTOR) / 2
@@ -509,18 +509,16 @@ class DrawTemplate:
 
 
 def main():
-	template = Template(rooms=3, doors=6, plain_links=(
-		(NodeIndex(0, 0), NodeIndex(1, 0)),
-		(NodeIndex(0, 2), NodeIndex(2, 5)),
-		(NodeIndex(3, 3), NodeIndex(0, 0)),
+	template = Template(rooms=1, doors=12, plain_links=(
+		(NodeIndex(0, 0), NodeIndex(1, 5)),
+		(NodeIndex(1, 3), NodeIndex(0, 10)),
 	))
 
 	draw_t = DrawTemplate(template, 1800, 900)
 
 	room = next(iter(draw_t.inner_rooms))
-	print(room.tl.y)
-	print(room.br.y - room.tl.y)
-	print(1 - room.br.y)
+	print(room.tl)
+	print(room.br)
 
 
 if __name__ == "__main__":
