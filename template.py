@@ -35,9 +35,10 @@ Link_T = tuple[NodeIndex, NodeIndex]
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Template:
-	"""Full description of the labyrinth."""
+	"""Full logic description of the labyrinth."""
 	# Total number of INNER rooms. 0 means this is a simple one-room labyrinth.
 	rooms: int
+	# Total number of OUTER doors.
 	doors: int
 	# List of connected nodes for each node.
 	# If there is link between ni1 and ni2 then:
@@ -61,27 +62,22 @@ class Template:
 
 	def outer_links(self) -> Iterable[Link_T]:
 		"""Links between outer doors."""
-		for node1, connected_nodes in self.links.items():
-			if node1.room:
+		for node1, node2 in self.all_links():
+			if node1.room or node2.room:
 				continue
-			for node2 in connected_nodes:
-				if node2.room:
-					continue
-				# So that we don't yield same link twice.
-				if node2 < node1:
-					continue
-				yield node1, node2
+			yield node1, node2
 
 	def inner_links(self) -> Iterable[Link_T]:
 		"""All links except outer links."""
-		for node1, connected_nodes in self.links.items():
-			for node2 in connected_nodes:
-				if not (node1.room or node2.room):
-					continue
-				# So that we don't yield same link twice.
-				if node2 < node1:
-					continue
-				yield node1, node2
+		for node1, node2 in self.all_links():
+			if not (node1.room or node2.room):
+				continue
+			yield node1, node2
+
+
+# # # # # # # # # # # # # # # # # # # # # #
+# Visual representation of the labyrinth  #
+# # # # # # # # # # # # # # # # # # # # # #
 
 
 class DoorTemplate(NamedTuple):
@@ -90,15 +86,47 @@ class DoorTemplate(NamedTuple):
 	# Bottom right boundary rectangular corner.
 	br: Pos
 
+	def center(self) -> Pos:
+		return Pos(
+			(self.tl.x + self.br.x) / 2,
+			(self.tl.y + self.br.y) / 2,
+		)
 
-RoadTemplate = InnerRoomTemplate = DoorTemplate
+
+RoomTemplate = DoorTemplate
+
+
+class RoadTemplate(NamedTuple):
+	# Endpoints of the road
+	p1: Pos
+	p2: Pos
+	# Road width relative to canvas width
+	x_relative_width: float
+
+
+"""How we expect labyrinth to be drawn?
+0. Draw outer room border.
+1. Draw outer room doors.
+2. If `depth`:
+	2.1. For each inner room:
+		2.1.1. Draw border.
+		2.1.2. Draw doors.
+		2.1.3. Go recursively to 2 with `depth = depth - 1`.
+	2.2. Draw all roads between inner and outer doors.
+
+Therefore we need templates for:
+1. Inner rooms.
+2. Outer doors.
+3. Inner doors.
+4. Roads.
+"""
 
 
 class DrawTemplate:
 	# Size of boundary rectangular for all inner rooms grid compared to outer room.
 	_ZOOM_FACTOR = 0.5
 	# Door size compared to smaller canvas edge.
-	_DOOR_MAX_RELATIVE_DIAMETER = 0.01
+	_DOOR_MAX_RELATIVE_DIAMETER = 0.02
 	# Min door size in pixels.
 	_DOOR_MIN_DIAMETER = 2
 	# Road width compared to smaller door diameter.
@@ -113,10 +141,32 @@ class DrawTemplate:
 		return cls._ZOOM_FACTOR
 
 	__slots__ = (
-		'_logic_template', '_width', '_height',
-		# Calculated:
+		# INPUT VALUES.
+		# : Template
+		'_logic_template',
+		# : float
+		# Canvas width and height.
+		'_width', '_height',
+
+		# CALCULATED VALUES.
+		# : int
+		# Total number of columns and rows for inner rooms.
 		'_cols', '_rows',
-		'_rooms', '_doors', '_outer_roads', '_inner_roads'
+
+		# : RoomTemplate
+		# All rooms in a list in order they are numbered. I.e. first element
+		# would be outer room.
+		'_rooms',
+
+		# : DoorTemplate
+		# All doors in a list in order they are numbered. I.e. if there are
+		# N outer doors in template then first N elements will be outer doors,
+		# next N elements - doors of the 1st inner room, and so on.
+		'_doors',
+
+		# : RoadTemplate
+		# All roads between outer and inner doors.
+		'_roads',
 	)
 
 	@property
@@ -140,22 +190,29 @@ class DrawTemplate:
 		return self._rows
 
 	@property
-	def rooms(self) -> tuple[InnerRoomTemplate, ...]:
+	def rooms(self) -> tuple[RoomTemplate, ...]:
 		return self._rooms
 
 	@property
 	def doors(self) -> tuple[DoorTemplate, ...]:
 		return self._doors
 
+	@property
+	def roads(self) -> tuple[RoadTemplate, ...]:
+		return self._roads
+
 	def __init__(self, logic_template: Template, width: float, height: float):
+		# Save 'building-values'.
 		self._logic_template = logic_template
 		self._width = width
 		self._height = height
 
+		# Calculate other values. Order matters, because next thing
+		# might depend on the previous.
 		self._cols, self._rows = self._get_rooms_matrix_size()
-
 		self._rooms = tuple(self._prepare_rooms())
 		self._doors = tuple(self._prepare_doors())
+		self._roads = tuple(self._prepare_roads())
 
 	def _get_rooms_matrix_size(self) -> tuple[int, int]:
 		"""Get rectangular arrangement of rooms that is the closest to
@@ -197,16 +254,24 @@ class DrawTemplate:
 
 	@staticmethod
 	def _ratio_defect(ratio: float, cols: int, rows: int):
-		_real_ratio = cols / rows
-		if ratio > _real_ratio:
-			return ratio / _real_ratio - 1
+		"""Check how `cols/rows` differs from desired `ratio`."""
+		real_ratio = cols / rows
+		if ratio > real_ratio:
+			return ratio / real_ratio - 1
 		else:
-			return _real_ratio / ratio - 1
+			return real_ratio / ratio - 1
 
-	def _prepare_rooms(self) -> Iterable[InnerRoomTemplate]:
+	def _prepare_rooms(self) -> Iterable[RoomTemplate]:
+		"""Yield outer and all inner rooms shapes."""
+		# OUTER ROOM.
+		# Simplest way: fill all the space.
+		yield RoomTemplate(Pos(0, 0), Pos(1, 1))
+
 		if not self._logic_template.rooms:
 			return
 
+		# INNER ROOMS.
+		# We create all inner rooms of the same size.
 		# Actual ratio (cols/rows) will not usually perfectly match canvas
 		# ratio (width/height), therefore if cols/rows < width/height
 		# we calculate dimensions according to y-size of rooms.
@@ -218,8 +283,13 @@ class DrawTemplate:
 			flipped = False
 		# We have to fit `count` rooms and `count - 1` gaps into `self._ZOOM_FACTOR`.
 		room_relative_size = self._ZOOM_FACTOR / (count + self._ROOMS_MIN_RELATIVE_DISTANCE * (count - 1))
+
 		# Gap in orthogonal direction will be bigger.
-		other_gap = (self._ZOOM_FACTOR / room_relative_size - other_count) / (other_count - 1)
+		if other_count > 1:
+			other_gap = (self._ZOOM_FACTOR / room_relative_size - other_count) / (other_count - 1)
+		else:
+			other_gap = 0
+
 		if flipped:
 			x_gap, y_gap = other_gap, self._ROOMS_MIN_RELATIVE_DISTANCE
 		else:
@@ -238,7 +308,7 @@ class DrawTemplate:
 				top_left.x + room_relative_size,
 				top_left.y + room_relative_size
 			)
-			yield InnerRoomTemplate(top_left, bottom_right)
+			yield RoomTemplate(top_left, bottom_right)
 
 	def _prepare_doors(self) -> Iterable[DoorTemplate]:
 		"""Yield all doors templates.
@@ -251,8 +321,8 @@ class DrawTemplate:
 		rectangular width < height). Angle between horizontal and first door
 		will be half of the angle between consecutive doors.
 		"""
-		doors = self._logic_template.doors
-		if not doors:
+		total_doors = self._logic_template.doors
+		if not total_doors:
 			return
 
 		# Make ratio <= 1.
@@ -271,15 +341,32 @@ class DrawTemplate:
 		# Square of inscribed ellipse eccentricity.
 		e2 = 1 - ratio ** 2
 
+		# Prepare abstract templates for doors.
+		doors = []
 		# Half angle between consecutive doors.
-		half_alpha = math.pi / doors / 2
-		for i in range(doors):
+		half_alpha = math.pi / total_doors / 2
+		for i in range(total_doors):
 			theta = half_alpha * (2 * i + 1)
 			center_relative_pos = self._get_door_center_relative_pos(theta, e2, ratio, flipped)
-			yield DoorTemplate(
+			doors.append(DoorTemplate(
 				Pos(center_relative_pos.x - door_x_relative_radius, center_relative_pos.y - door_y_relative_radius),
 				Pos(center_relative_pos.x + door_x_relative_radius, center_relative_pos.y + door_y_relative_radius),
-			)
+			))
+
+		# Finally yield template for doors with respect to rooms templates.
+		for room in self._rooms:
+			room_relative_width = room.br.x - room.tl.x
+			room_relative_height = room.br.y - room.tl.y
+			for door in doors:
+				top_left = Pos(
+					room.tl.x + room_relative_width * door.tl.x,
+					room.tl.y + room_relative_height * door.tl.y
+				)
+				bottom_right = Pos(
+					room.tl.x + room_relative_width * door.br.x,
+					room.tl.y + room_relative_height * door.br.y
+				)
+				yield DoorTemplate(top_left, bottom_right)
 
 	@staticmethod
 	def _get_door_center_relative_pos(
@@ -311,6 +398,22 @@ class DrawTemplate:
 		else:
 			return Pos(x_relative, y_relative)
 
+	def get_door(self, node_index: NodeIndex) -> DoorTemplate:
+		"""Depends on the fact that `_prepare_doors` stores them in exactly this order."""
+		return self._doors[node_index.door + node_index.room * self._logic_template.doors]
+
+	def _prepare_roads(self) -> Iterable[RoadTemplate]:
+		for node1, node2 in self._logic_template.all_links():
+			door1, door2 = self.get_door(node1), self.get_door(node2)
+			# Here we assume that door template built in such a way that when
+			# it will be calculated in pixels it will have equal width and
+			# height. Therefore, it doesn't matter what relative size to choose.
+			# But we want go from the smallest door in pair.
+			min_door_x_relative_diameter = min(door1.br.x - door1.tl.x, door2.br.x - door2.tl.x)
+			road_x_relative_width = min_door_x_relative_diameter * self._ROAD_MAX_RELATIVE_WIDTH
+
+			yield RoadTemplate(door1.center(), door2.center(), road_x_relative_width)
+
 
 def main():
 	template = Template(rooms=3, doors=6, plain_links=(
@@ -319,7 +422,7 @@ def main():
 		(NodeIndex(3, 3), NodeIndex(0, 0)),
 	))
 
-	draw_t = DrawTemplate(template, 100, 200)
+	draw_t = DrawTemplate(template, 1800, 900)
 	print(draw_t.cols)
 
 

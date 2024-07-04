@@ -1,7 +1,6 @@
-import dataclasses
+from typing import NamedTuple
 
 
-@dataclasses.dataclass(slots=True)
-class Pos:
+class Pos(NamedTuple):
 	x: float
 	y: float
