@@ -80,57 +80,70 @@ class Template:
 # # # # # # # # # # # # # # # # # # # # # #
 
 
-class DoorTemplate(NamedTuple):
-	# Top left boundary rectangular corner.
+class RectTemplate(NamedTuple):
+	"""Corners of boundary rectangle (in which object will be inscribed)
+	in respect to outer virtual rectangle.
+	"""
+	# Top left.
 	tl: Pos
-	# Bottom right boundary rectangular corner.
+	# Bottom right.
 	br: Pos
 
 	def center(self) -> Pos:
+		"""Two corners mid-point."""
 		return Pos(
 			(self.tl.x + self.br.x) / 2,
 			(self.tl.y + self.br.y) / 2,
 		)
 
+	@classmethod
+	def make_abstract(cls) -> Self:
+		"""Template for outer virtual rectangle itself."""
+		return cls(Pos(0, 0), Pos(1, 1))
 
-RoomTemplate = DoorTemplate
+	@classmethod
+	def make_from_center(cls, center: Pos, radius_vector: Pos) -> Self:
+		"""Make from given center and sizes (`radius_vector`)."""
+		return cls(
+			Pos(center.x - radius_vector.x, center.y - radius_vector.y),
+			Pos(center.x + radius_vector.x, center.y + radius_vector.y)
+		)
 
 
 class RoadTemplate(NamedTuple):
 	# Endpoints of the road
 	p1: Pos
 	p2: Pos
-	# Road width relative to canvas width
-	x_relative_width: float
 
-
-"""How we expect labyrinth to be drawn?
-0. Draw outer room border.
-1. Draw outer room doors.
-2. If `depth`:
-	2.1. For each inner room:
-		2.1.1. Draw border.
-		2.1.2. Draw doors.
-		2.1.3. Go recursively to 2 with `depth = depth - 1`.
-	2.2. Draw all roads between inner and outer doors.
-
-Therefore we need templates for:
-1. Inner rooms.
-2. Outer doors.
-3. Inner doors.
-4. Roads.
-"""
+	width: float
 
 
 class DrawTemplate:
+	"""How we expect labyrinth to be drawn?
+	0. Draw outer room border.
+	1. Draw outer room doors.
+	2. If `depth`:
+		2.1. For each inner room:
+			2.1.1. Draw border.
+			2.1.2. Draw doors.
+			2.1.3. Go recursively to 2 with `depth = depth - 1`.
+		2.2. Draw all roads between inner and outer doors.
+
+	Therefore, we need templates for:
+	1. Inner rooms.
+	2. Outer doors.
+	3. Inner doors.
+	4. Roads.
+	"""
+
 	# Size of boundary rectangular for all inner rooms grid compared to outer room.
-	_ZOOM_FACTOR = 0.5
+	_ZOOM_FACTOR = 0.9
 	# Door size compared to smaller canvas edge.
-	_DOOR_MAX_RELATIVE_DIAMETER = 0.02
+	_DOOR_MAX_RELATIVE_DIAMETER = 0.05
 	# Min door size in pixels.
 	_DOOR_MIN_DIAMETER = 2
 	# Road width compared to smaller door diameter.
-	_ROAD_MAX_RELATIVE_WIDTH = 0.25
+	_ROAD_MAX_RELATIVE_WIDTH = 0.25  # TODO: doesn't work properly, fix?
 	# Min road width in pixels.
 	_ROAD_MIN_WIDTH = 1
 	# Distance between inner rooms compared to their size.
@@ -153,12 +166,12 @@ class DrawTemplate:
 		# Total number of columns and rows for inner rooms.
 		'_cols', '_rows',
 
-		# : RoomTemplate
+		# : RectTemplate
 		# All rooms in a list in order they are numbered. I.e. first element
 		# would be outer room.
 		'_rooms',
 
-		# : DoorTemplate
+		# : RectTemplate
 		# All doors in a list in order they are numbered. I.e. if there are
 		# N outer doors in template then first N elements will be outer doors,
 		# next N elements - doors of the 1st inner room, and so on.
@@ -190,12 +203,35 @@ class DrawTemplate:
 		return self._rows
 
 	@property
-	def rooms(self) -> tuple[RoomTemplate, ...]:
+	def rooms(self) -> tuple[RectTemplate, ...]:
 		return self._rooms
 
 	@property
-	def doors(self) -> tuple[DoorTemplate, ...]:
+	def outer_room(self) -> RectTemplate:
+		"""Depends on the fact that `_prepare_rooms` stores them in that exact order."""
+		return self._rooms[0]
+
+	@property
+	def inner_rooms(self) -> Iterable[RectTemplate]:
+		"""Depends on the fact that `_prepare_rooms` stores them in that exact order."""
+		for i in range(1, len(self._rooms)):
+			yield self._rooms[i]
+
+	@property
+	def doors(self) -> tuple[RectTemplate, ...]:
 		return self._doors
+
+	@property
+	def outer_doors(self) -> Iterable[RectTemplate]:
+		"""Depends on the fact that `_prepare_doors` stores them in that exact order."""
+		for i in range(self._logic_template.doors):
+			yield self._doors[i]
+
+	@property
+	def inner_doors(self) -> Iterable[RectTemplate]:
+		"""Depends on the fact that `_prepare_doors` stores them in that exact order."""
+		for i in range(self._logic_template.doors, len(self._doors)):
+			yield self._doors[i]
 
 	@property
 	def roads(self) -> tuple[RoadTemplate, ...]:
@@ -243,14 +279,15 @@ class DrawTemplate:
 			flipped = False
 
 		rows_base = round(math.sqrt(rooms / canvas_ratio))
-		cols, rows = 1, 1
+		best_cols, best_rows, best_defect = 0, 0, math.inf
 		# Search for optimal number of rows around `rows_base`: +- 1.
-		for rows_cur in range(max(rows_base - 1, 1), rows_base + 2):
-			cols_cur = (rooms - 1) // rows_cur + 1
-			if self._ratio_defect(canvas_ratio, cols_cur, rows_cur) < self._ratio_defect(canvas_ratio, cols, rows):
-				cols, rows = cols_cur, rows_cur
+		for rows in range(max(rows_base - 1, 1), rows_base + 2):
+			cols = (rooms - 1) // rows + 1
+			defect = self._ratio_defect(canvas_ratio, cols, rows)
+			if defect < best_defect:
+				best_cols, best_rows, best_defect = cols, rows, defect
 
-		return (rows, cols) if flipped else (cols, rows)
+		return (best_rows, best_cols) if flipped else (best_cols, best_rows)
 
 	@staticmethod
 	def _ratio_defect(ratio: float, cols: int, rows: int):
@@ -261,11 +298,74 @@ class DrawTemplate:
 		else:
 			return real_ratio / ratio - 1
 
-	def _prepare_rooms(self) -> Iterable[RoomTemplate]:
+	@staticmethod
+	def get_pos_from_abstract(pos: Pos, outer_room: RectTemplate) -> Pos:
+		"""Get position inside rectangle.
+
+		`pos` is relative position inside the `outer_room`.
+		Relative abstract position (1, 1) corresponds to `outer_room` bottom
+		right corner.
+		"""
+		width = outer_room.br.x - outer_room.tl.x
+		height = outer_room.br.y - outer_room.tl.y
+		return Pos(
+			outer_room.tl.x + width * pos.x,
+			outer_room.tl.y + height * pos.y
+		)
+
+	@classmethod
+	def get_rect_from_abstract(
+		cls,
+		rect: RectTemplate,
+		outer_room: RectTemplate,
+		ensure_min: bool = False
+	) -> RectTemplate:
+		"""Get rectangle position inside outer rectangle.
+
+		`rect` described in relative positions inside the `outer_room`.
+		Relative abstract position (1, 1) corresponds to `outer_room` bottom
+		right corner.
+		If `ensure_min` - method ensures rect size is at least
+		_DOOR_MIN_DIAMETER. It's designed to be used when we calculate final
+		pixel positions of doors on the canvas.
+		"""
+		top_left = cls.get_pos_from_abstract(rect.tl, outer_room)
+		bottom_right = cls.get_pos_from_abstract(rect.br, outer_room)
+		real_door = RectTemplate(top_left, bottom_right)
+		if not ensure_min:
+			return real_door
+
+		# We assume door is a circle, so x_diameter equals y_diameter
+		diameter = bottom_right.x - top_left.x
+		if diameter >= cls._DOOR_MIN_DIAMETER:
+			return real_door
+
+		# Construct it from center and minimum radius.
+		return RectTemplate.make_from_center(
+			cls.get_pos_from_abstract(rect.center(), outer_room),
+			Pos(cls._DOOR_MIN_DIAMETER, cls._DOOR_MIN_DIAMETER)
+		)
+
+	@classmethod
+	def get_road_from_abstract(
+		cls,
+		road: RoadTemplate,
+		outer_room: RectTemplate
+	) -> RoadTemplate:
+		p1 = cls.get_pos_from_abstract(road.p1, outer_room)
+		p2 = cls.get_pos_from_abstract(road.p2, outer_room)
+		room_width = outer_room.br.x - outer_room.tl.x
+		width = max(room_width * road.width, cls._ROAD_MIN_WIDTH)
+
+		return RoadTemplate(p1, p2, width)
+
+	def _prepare_rooms(self) -> Iterable[RectTemplate]:
 		"""Yield outer and all inner rooms shapes."""
 		# OUTER ROOM.
 		# Simplest way: fill all the space.
-		yield RoomTemplate(Pos(0, 0), Pos(1, 1))
+		# But it's not necessary, we can make outer room smaller if we want.
+		outer_room = RectTemplate.make_abstract()
+		yield outer_room
 
 		if not self._logic_template.rooms:
 			return
@@ -281,36 +381,41 @@ class DrawTemplate:
 		else:
 			count, other_count = self._cols, self._rows
 			flipped = False
+
 		# We have to fit `count` rooms and `count - 1` gaps into `self._ZOOM_FACTOR`.
 		room_relative_size = self._ZOOM_FACTOR / (count + self._ROOMS_MIN_RELATIVE_DISTANCE * (count - 1))
+		gap = room_relative_size * self._ROOMS_MIN_RELATIVE_DISTANCE
+		room_and_gap = room_relative_size + gap
+		# In orthogonal direction we will have excess of the space, so will
+		# center our rooms by adding `excess` gap from each side.
+		excess = (self._ZOOM_FACTOR - room_and_gap * other_count - gap) / 2
 
-		# Gap in orthogonal direction will be bigger.
-		if other_count > 1:
-			other_gap = (self._ZOOM_FACTOR / room_relative_size - other_count) / (other_count - 1)
-		else:
-			other_gap = 0
-
-		if flipped:
-			x_gap, y_gap = other_gap, self._ROOMS_MIN_RELATIVE_DISTANCE
-		else:
-			x_gap, y_gap = self._ROOMS_MIN_RELATIVE_DISTANCE, other_gap
-
-		# Distance from the edge of the canvas to the closest room.
+		# Distance from the edge of the outer room to the closest inner room.
 		PADDING = (1 - self._ZOOM_FACTOR) / 2
+		if flipped:
+			grid_top_left = Pos(PADDING + excess, PADDING)
+		else:
+			grid_top_left = Pos(PADDING, PADDING + excess)
+
 		for room in range(self._logic_template.rooms):
 			# TODO: 'flip' is self._width < self._height ..?
 			row, col = divmod(room, self._cols)
+			# Find corners with respect to outer room.
 			top_left = Pos(
-				PADDING + (room_relative_size + x_gap) * col,
-				PADDING + (room_relative_size + y_gap) * row
+				grid_top_left.x + room_and_gap * col,
+				grid_top_left.y + room_and_gap * row
 			)
 			bottom_right = Pos(
 				top_left.x + room_relative_size,
 				top_left.y + room_relative_size
 			)
-			yield RoomTemplate(top_left, bottom_right)
+			# Finally yield template with respect to outer virtual rectangle.
+			yield RectTemplate(
+				self.get_pos_from_abstract(top_left, outer_room),
+				self.get_pos_from_abstract(bottom_right, outer_room),
+			)
 
-	def _prepare_doors(self) -> Iterable[DoorTemplate]:
+	def _prepare_doors(self) -> Iterable[RectTemplate]:
 		"""Yield all doors templates.
 
 		Imagine origin in top left corner, Ox pointer to the right and
@@ -337,36 +442,24 @@ class DrawTemplate:
 			ratio = self._height / self._width
 			door_y_relative_radius = self._DOOR_MAX_RELATIVE_DIAMETER / 2
 			door_x_relative_radius = door_y_relative_radius * ratio
+		door_radius_vector = Pos(door_x_relative_radius, door_y_relative_radius)
 
 		# Square of inscribed ellipse eccentricity.
 		e2 = 1 - ratio ** 2
 
-		# Prepare abstract templates for doors.
+		# Prepare abstract templates for doors relative to outer virtual rectangle.
 		doors = []
 		# Half angle between consecutive doors.
 		half_alpha = math.pi / total_doors / 2
 		for i in range(total_doors):
 			theta = half_alpha * (2 * i + 1)
 			center_relative_pos = self._get_door_center_relative_pos(theta, e2, ratio, flipped)
-			doors.append(DoorTemplate(
-				Pos(center_relative_pos.x - door_x_relative_radius, center_relative_pos.y - door_y_relative_radius),
-				Pos(center_relative_pos.x + door_x_relative_radius, center_relative_pos.y + door_y_relative_radius),
-			))
+			doors.append(RectTemplate.make_from_center(center_relative_pos, door_radius_vector))
 
 		# Finally yield template for doors with respect to rooms templates.
 		for room in self._rooms:
-			room_relative_width = room.br.x - room.tl.x
-			room_relative_height = room.br.y - room.tl.y
 			for door in doors:
-				top_left = Pos(
-					room.tl.x + room_relative_width * door.tl.x,
-					room.tl.y + room_relative_height * door.tl.y
-				)
-				bottom_right = Pos(
-					room.tl.x + room_relative_width * door.br.x,
-					room.tl.y + room_relative_height * door.br.y
-				)
-				yield DoorTemplate(top_left, bottom_right)
+				yield self.get_rect_from_abstract(door, room)
 
 	@staticmethod
 	def _get_door_center_relative_pos(
@@ -398,8 +491,8 @@ class DrawTemplate:
 		else:
 			return Pos(x_relative, y_relative)
 
-	def get_door(self, node_index: NodeIndex) -> DoorTemplate:
-		"""Depends on the fact that `_prepare_doors` stores them in exactly this order."""
+	def get_door(self, node_index: NodeIndex) -> RectTemplate:
+		"""Depends on the fact that `_prepare_doors` stores them in that exact order."""
 		return self._doors[node_index.door + node_index.room * self._logic_template.doors]
 
 	def _prepare_roads(self) -> Iterable[RoadTemplate]:
@@ -423,7 +516,11 @@ def main():
 	))
 
 	draw_t = DrawTemplate(template, 1800, 900)
-	print(draw_t.cols)
+
+	room = next(iter(draw_t.inner_rooms))
+	print(room.tl.y)
+	print(room.br.y - room.tl.y)
+	print(1 - room.br.y)
 
 
 if __name__ == "__main__":
