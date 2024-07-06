@@ -1,7 +1,8 @@
 import tkinter
 from typing import Callable, Optional
 
-from template import NodeIndex, Template, DrawTemplate, RectTemplate, RoadTemplate
+from template import NodeIndex, Template
+from draw_template import RectTemplate, RoadTemplate, DrawTemplate
 from utils import Pos
 import test
 
