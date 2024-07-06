@@ -11,20 +11,20 @@ is connected to j-th door of k-th house inside that inner house, and so on.
 
 In this module we use term 'room' instead of 'house'.
 """
+import os
 
-# from __future__ import annotations
-import dataclasses
-from typing import Iterable, Self
-
-from template import Template, NodeIndex, Link_T
-
+from template import Template, NodeIndex
+import test
 
 type _Data_T = list[int | None]
 type _Locations_T = [list[list[int]]]
 
 
+LOG = bool(int(os.environ.get('LOG', '0')))
+
+
 class DistMatrix:
-	__slots__ = '_template', '_total_nodes', '_data',  # '_LOCATION'
+	__slots__ = '_template', '_total_nodes', '_data',  '_counter',  # '_LOCATION'
 
 	def __init__(self, template: Template):
 		self._template = template
@@ -39,7 +39,12 @@ class DistMatrix:
 		# self._LOCATION: _Locations_T = self._prepare_locations()
 
 		# Calculate all distances:
+		self._counter = 0
 		self._fill()
+
+	@property
+	def counter(self) -> int:
+		return self._counter
 
 	def get(self, node1: NodeIndex, node2: NodeIndex) -> int | None:
 		"""Get the shortest path length between two nodes."""
@@ -47,6 +52,24 @@ class DistMatrix:
 
 	def _get_node_index(self, room: int, door: int) -> int:
 		return room * self._template.doors + door
+
+	def _reverse_get_node_index(self, node_index: int) -> NodeIndex:
+		room, door = divmod(node_index, self._template.doors)
+		return NodeIndex(room, door)
+
+	def count_defined(self):
+		return sum(int(value is not None) for value in self._data)
+
+	def show(self, only_defined: bool = True):
+		"""Show current state of `self._data` in a nice way."""
+		for node1_index in range(self._total_nodes - 1):
+			node1 = NodeIndex(*self._reverse_get_node_index(node1_index))
+			for node2_index in range(node1_index + 1, self._total_nodes):
+				node2 = NodeIndex(*self._reverse_get_node_index(node2_index))
+				dist = self._get(node1_index, node2_index)
+				if only_defined and dist is None:
+					continue
+				print(f'dist({node1}, {node2}) = {dist}')
 
 	def _get(self, node1_index: int, node2_index: int) -> int | None:
 		"""Get the shortest path length between two nodes."""
@@ -57,17 +80,17 @@ class DistMatrix:
 	def _set(self, node1_index: int, node2_index: int, dist: int):
 		self._data[self._get_location(node1_index, node2_index)] = dist
 
-	def _prepare_locations(self) -> _Locations_T:
-		"""Prepare indices of `self._data` elements for each pair of
-		DISTINCT node indices.
-
-		NOTE: Turns out, it doesn't make a difference in speed,
-		but only uses more memory.
-		"""
-		return [[
-			self._get_location(node1_index, node2_index)
-			for node2_index in range(self._total_nodes)
-		] for node1_index in range(self._total_nodes)]
+	# def _prepare_locations(self) -> _Locations_T:
+	# 	"""Prepare indices of `self._data` elements for each pair of
+	# 	DISTINCT node indices.
+	#
+	# 	NOTE: Turns out, it doesn't make a difference in speed,
+	# 	but only uses more memory.
+	# 	"""
+	# 	return [[
+	# 		self._get_location(node1_index, node2_index)
+	# 		for node2_index in range(self._total_nodes)
+	# 	] for node1_index in range(self._total_nodes)]
 
 	def _get_location(self, node1_index: int, node2_index: int) -> int:
 		"""Get index of respective element in `self._data`"""
@@ -103,13 +126,30 @@ class DistMatrix:
 			+ (node2_index - node1_index - 1)
 		)
 
+	def get_complexity(self) -> int:
+		rooms, doors, nodes = self._template.rooms, self._template.doors, self._total_nodes
+		return (doors - 2) * doors * (doors - 1) // 2 * rooms * nodes ** 3
+
 	def _fill(self):
 		"""Fill `self._data` with proper values."""
+		if LOG:
+			print("ANALYZING...")
+			print(f"Estimated complexity: {self.get_complexity():_}")
+			print("Adding explicit links...")
+
 		# Add template explicit links.
 		for node1, node2 in self._template.all_links():
 			node1_index = self._get_node_index(*node1)
 			node2_index = self._get_node_index(*node2)
 			self._add_road(node1_index, node2_index, length=1)
+
+		if LOG:
+			print("Explicit links added")
+			self.show()
+			print(f"Total defined: {self.count_defined()}")
+			print("Depth 1 done")
+			print()
+			print("Analyzing recursively...")
 
 		# Take into consideration implicit 'recursive' links.
 		# Will go for maximum of `self._template.doors - 2` iterations, I hope.
@@ -117,23 +157,36 @@ class DistMatrix:
 		# Inner complexity: DOORS * (DOORS - 1) / 2 * ROOMS * NODES * NODES * NODES
 		# Total complexity: (DOORS - 2) * DOORS * (DOORS - 1) / 2 * ROOMS * NODES * NODES * NODES
 		# NODES = (ROOMS + 1) * NODES
+		depth = 1
 		while self._update():
-			pass
+			depth += 1
+			if LOG:
+				print(f'Depth {depth} done')
+				print()
 
-	def _add_road(self, node1_index: int, node2_index: int, length: int) -> bool:
+	def _add_road(self, node1_index: int, node2_index: int, length: int, recursion_depth: int = 0) -> bool:
 		"""Update labyrinth with new road. Update distances if needed.
 		Return value indicates if new road made a difference.
 		"""
 		cur_dist = self._get(node1_index, node2_index)
 		if cur_dist is not None and cur_dist <= length:
+			self._counter += 1
 			return False
 
+		if LOG:
+			node1, node2 = self._reverse_get_node_index(node1_index), self._reverse_get_node_index(node2_index)
+			pad = '\t' * recursion_depth
+			# dist((0, 0), (1, 1)) = 5 <- None
+			if node1 == (0, 0) and node2 == (1, 1) and cur_dist is None and length == 5:
+				t = 2
+			print(f'{pad}dist({node1}, {node2}) = {length} <- {cur_dist}')
+
 		self._set(node1_index, node2_index, length)
-		self._propagate(node1_index, node2_index, length)
+		self._propagate(node1_index, node2_index, length, recursion_depth)
 
 		return True
 
-	def _propagate(self, node1_index: int, node2_index: int, length: int):
+	def _propagate(self, node1_index: int, node2_index: int, length: int, recursion_depth: int = 0):
 		"""Propagate changes in `self._data` after calling
 		self._set(node1_index, node2_index, length).
 
@@ -149,9 +202,11 @@ class DistMatrix:
 		# Complexity: NODES * NODES * NODES
 		for node_i_index in range(self._total_nodes):
 			if node_i_index == node2_index:
+				self._counter += 1
 				continue
 			if (left_dist := self._get(node_i_index, node1_index)) is None:
 				# No connection
+				self._counter += 1
 				continue
 
 			# Iterate through B:
@@ -165,12 +220,19 @@ class DistMatrix:
 					# Exclude (node1, node2) pair.
 					or node_i_index == node1_index and node_j_index == node2_index
 				):
+					self._counter += 1
 					continue
 				if (right_dist := self._get(node2_index, node_j_index)) is None:
 					# No connection
+					self._counter += 1
 					continue
 				# We can go node_i <-> node1 <-> node2 <-> node_j.
-				self._add_road(node_i_index, node_j_index, left_dist + length + right_dist)
+				self._add_road(
+					node_i_index,
+					node_j_index,
+					left_dist + length + right_dist,
+					recursion_depth + 1
+				)
 
 	def _update(self) -> bool:
 		"""Update `self._data` using recursive knowledge.
@@ -189,21 +251,49 @@ class DistMatrix:
 			for door2 in range(door1 + 1, self._template.doors):
 				node2_index = self._get_node_index(room=0, door=door2)
 				if (dist := self._get(node1_index, node2_index)) is None:
+					self._counter += 1
 					continue
 
+				if LOG:
+					node1 = self._reverse_get_node_index(node1_index)
+					node2 = self._reverse_get_node_index(node2_index)
+					print(f"Processing {node1} <-> {node2}")
+
 				for room in range(1, self._template.rooms + 1):
-					updated |= self._add_road(
+					was_updated = self._add_road(
 						self._get_node_index(room, door1),
 						self._get_node_index(room, door2),
 						dist
 					)
+					updated |= was_updated
+					if LOG:
+						if was_updated:
+							print(f"Total defined: {self.count_defined()}")
 
 		return updated
 
 
 def main():
 	...
+	import time
+	import draw
 
+	print("Input:")
+	template, start, finish = test.get_hard_test(rooms=2, doors=4)
+	print()
+
+	time0 = time.perf_counter()
+	dist_matrix = DistMatrix(template)
+	time1 = time.perf_counter()
+	print()
+	print(f"Real complexity: {dist_matrix.counter:_}")
+	print()
+
+	shortest_path_len = dist_matrix.get(NodeIndex(0, start), NodeIndex(0, finish))
+	print("Shortest path length:", shortest_path_len)
+	print(f"Found in {time1 - time0:.3f} seconds")
+
+	draw.show(draw.draw_template, template, depth=1, marker=(start, finish))
 
 
 if __name__ == "__main__":

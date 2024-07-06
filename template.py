@@ -25,6 +25,9 @@ class NodeIndex(NamedTuple):
 	room: int
 	door: int
 
+	def __str__(self):
+		return f'({self.room}, {self.door})'
+
 
 # Describes input values.
 type Link_T = tuple[NodeIndex, NodeIndex]
