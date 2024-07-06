@@ -74,6 +74,22 @@ class Template:
 				continue
 			yield node1, node2
 
+	@staticmethod
+	def timus_links_repr(plain_link: Link_T) -> str:
+		node1, node2 = plain_link
+		return f'{node1.room}.{node1.door} - {node2.room}.{node2.door}'
+
+	def timus_repr_gen(self) -> Iterable[str]:
+		yield f'{self.rooms} {self.doors}'
+		all_links = tuple(self.all_links())
+
+		yield str(len(all_links))
+		for link in all_links:
+			yield self.timus_links_repr(link)
+
+	def timus_repr(self) -> str:
+		return '\n'.join(self.timus_repr_gen())
+
 
 # # # # # # # # # # # # # # # # # # # # # #
 # Visual representation of the labyrinth  #
@@ -119,31 +135,14 @@ class RoadTemplate(NamedTuple):
 
 
 class DrawTemplate:
-	"""How we expect labyrinth to be drawn?
-	0. Draw outer room border.
-	1. Draw outer room doors.
-	2. If `depth`:
-		2.1. For each inner room:
-			2.1.1. Draw border.
-			2.1.2. Draw doors.
-			2.1.3. Go recursively to 2 with `depth = depth - 1`.
-		2.2. Draw all roads between inner and outer doors.
-
-	Therefore, we need templates for:
-	1. Inner rooms.
-	2. Outer doors.
-	3. Inner doors.
-	4. Roads.
-	"""
-
 	# Size of boundary rectangular for all inner rooms grid compared to outer room.
-	_ZOOM_FACTOR = 0.9
+	_ZOOM_FACTOR = 0.75
 	# Door size compared to smaller canvas edge.
-	_DOOR_MAX_RELATIVE_DIAMETER = 0.05
+	_DOOR_MAX_RELATIVE_DIAMETER = 0.03
 	# Min door size in pixels.
 	_DOOR_MIN_DIAMETER = 2
 	# Road width compared to smaller door diameter.
-	_ROAD_MAX_RELATIVE_WIDTH = 0.25  # TODO: doesn't work properly, fix?
+	_ROAD_MAX_RELATIVE_WIDTH = 0.2
 	# Min road width in pixels.
 	_ROAD_MIN_WIDTH = 1
 	# Distance between inner rooms compared to their size.
