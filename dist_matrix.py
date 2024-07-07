@@ -176,9 +176,6 @@ class DistMatrix:
 		if LOG:
 			node1, node2 = self._reverse_get_node_index(node1_index), self._reverse_get_node_index(node2_index)
 			pad = '\t' * recursion_depth
-			# dist((0, 0), (1, 1)) = 5 <- None
-			if node1 == (0, 0) and node2 == (1, 1) and cur_dist is None and length == 5:
-				t = 2
 			print(f'{pad}dist({node1}, {node2}) = {length} <- {cur_dist}')
 
 		self._set(node1_index, node2_index, length)
@@ -200,6 +197,7 @@ class DistMatrix:
 		"""
 		# Iterate through A:
 		# Complexity: NODES * NODES * NODES
+		to_propagate = []
 		for node_i_index in range(self._total_nodes):
 			if node_i_index == node2_index:
 				self._counter += 1
@@ -227,12 +225,16 @@ class DistMatrix:
 					self._counter += 1
 					continue
 				# We can go node_i <-> node1 <-> node2 <-> node_j.
-				self._add_road(
-					node_i_index,
-					node_j_index,
-					left_dist + length + right_dist,
-					recursion_depth + 1
-				)
+				dist = left_dist + length + right_dist
+				cur_dist = self._get(node_i_index, node_j_index)
+				if cur_dist is not None and cur_dist <= dist:
+					self._counter += 1
+					continue
+				self._set(node_i_index, node_j_index, dist)
+				to_propagate.append((node_i_index, node_j_index, dist, recursion_depth + 1))
+
+		for args in to_propagate:
+			self._propagate(*args)
 
 	def _update(self) -> bool:
 		"""Update `self._data` using recursive knowledge.
@@ -246,6 +248,7 @@ class DistMatrix:
 		# Inner complexity: NODES * NODES * NODES
 		# Total complexity: DOORS * (DOORS - 1) / 2 * ROOMS * NODES * NODES * NODES
 		updated = False
+		to_propagate = []
 		for door1 in range(self._template.doors - 1):
 			node1_index = self._get_node_index(room=0, door=door1)
 			for door2 in range(door1 + 1, self._template.doors):
@@ -260,15 +263,23 @@ class DistMatrix:
 					print(f"Processing {node1} <-> {node2}")
 
 				for room in range(1, self._template.rooms + 1):
-					was_updated = self._add_road(
-						self._get_node_index(room, door1),
-						self._get_node_index(room, door2),
-						dist
-					)
-					updated |= was_updated
+					inner_node1_index = self._get_node_index(room, door1)
+					inner_node2_index = self._get_node_index(room, door2)
+					cur_dist = self._get(inner_node1_index, inner_node2_index)
+					if cur_dist is not None and cur_dist <= dist:
+						self._counter += 1
+						continue
+					self._set(inner_node1_index, inner_node2_index, dist)
+					to_propagate.append((inner_node1_index, inner_node2_index, dist))
+					updated = True
 					if LOG:
-						if was_updated:
-							print(f"Total defined: {self.count_defined()}")
+						node1 = self._reverse_get_node_index(inner_node1_index)
+						node2 = self._reverse_get_node_index(inner_node2_index)
+						print(f'dist({node1}, {node2}) = {dist} <- {cur_dist}')
+						print(f"Total defined: {self.count_defined()}")
+
+		for args in to_propagate:
+			self._propagate(*args)
 
 		return updated
 
@@ -279,7 +290,7 @@ def main():
 	import draw
 
 	print("Input:")
-	template, start, finish = test.get_hard_test(rooms=2, doors=4)
+	template, start, finish = test.get_hard_test(rooms=5, doors=6)
 	print()
 
 	time0 = time.perf_counter()
@@ -293,7 +304,7 @@ def main():
 	print("Shortest path length:", shortest_path_len)
 	print(f"Found in {time1 - time0:.3f} seconds")
 
-	draw.show(draw.draw_template, template, depth=1, marker=(start, finish))
+	# draw.show(draw.draw_template, template, depth=1, marker=(start, finish))
 
 
 if __name__ == "__main__":
