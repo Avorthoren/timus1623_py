@@ -17,7 +17,6 @@ from template import Template, NodeIndex
 import test
 
 type _Data_T = list[list[int | None]]
-type _Locations_T = [list[list[int]]]
 type _UpdatedLinks_T = set[tuple[int, int]]
 
 
@@ -109,7 +108,6 @@ class DistMatrix:
 		n = self._total_nodes
 		data: _Data_T = [[None] * n for _ in range(n)]
 		for i in range(n):
-			i: int
 			data[i][i] = 0
 
 		return data
@@ -184,25 +182,12 @@ class DistMatrix:
 					Если (i, j) пара внешних дверей:
 						Добавить (i, j) в U
 		"""
-		if LOG:
-			print("ANALYZING...")
-			print(f"Estimated complexity: {self.get_complexity():_}")
-			print("Adding explicit links...")
-
 		updated_outer_links: _UpdatedLinks_T = set()
 		# Add template explicit links.
 		for node1, node2 in self._template.all_links():
 			node1_index = self._get_node_index(*node1)
 			node2_index = self._get_node_index(*node2)
 			self._add_road(node1_index, node2_index, updated_outer_links)
-
-		if LOG:
-			print("Explicit links added")
-			self.show()
-			print(f"Total defined: {self.count_defined()}")
-			print("Depth 1 done")
-			print()
-			print("Analyzing recursively...")
 
 		# Eventually `self._data` will 'converge' to final value.
 		while updated_outer_links:
@@ -236,12 +221,7 @@ class DistMatrix:
 		"""
 		cur_dist = self._get(node1_index, node2_index)
 		if cur_dist is not None and cur_dist <= length:
-			# self._counter += 1
 			return
-
-		if LOG:
-			node1, node2 = self._reverse_get_node_index(node1_index), self._reverse_get_node_index(node2_index)
-			print(f'dist({node1}, {node2}) = {length} <- {cur_dist}')
 
 		self._set(node1_index, node2_index, length)
 		if self._is_outer_node(node1_index) and self._is_outer_node(node2_index):
@@ -288,17 +268,14 @@ class DistMatrix:
 		# Iterate through A:
 		for node_i_index in range(self._total_nodes):
 			if node_i_index == node2_index:
-				# self._counter += 1
 				continue
 			if (left_dist := self._get(node_i_index, node1_index)) is None:
 				# No (i, a) connection
-				# self._counter += 1
 				continue
 
 			i_is_outer = self._is_outer_node(node_i_index)
 			# Iterate through B:
 			for node_j_index in range(self._total_nodes):
-				# self._counter += 1
 				if (
 					node_j_index == node1_index
 					# Exclude (a, b) pair.

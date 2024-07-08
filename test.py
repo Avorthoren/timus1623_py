@@ -60,8 +60,8 @@ def get_hard_unsolvable_test(rooms: int = 5, doors: int = 20, echo: bool = True)
 
 
 def main():
-	# get_hard_test(5, 20)
-	get_hard_unsolvable_test(5, 20)
+	get_hard_test(5, 20)
+	# get_hard_unsolvable_test(5, 20)
 
 
 if __name__ == "__main__":
