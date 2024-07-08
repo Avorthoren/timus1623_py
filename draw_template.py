@@ -1,5 +1,8 @@
-from __future__ import annotations
+"""Module for template of visual representation of labyrinths from
+https://acm.timus.ru/problem.aspx?space=1&num=1623
+"""
 
+from __future__ import annotations
 import math
 from typing import NamedTuple, Self, Iterable
 

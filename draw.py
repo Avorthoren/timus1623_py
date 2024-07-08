@@ -1,3 +1,7 @@
+"""Module to draw labyrinths from
+https://acm.timus.ru/problem.aspx?space=1&num=1623
+"""
+
 import tkinter
 from typing import Callable, Optional
 
@@ -40,6 +44,7 @@ def _draw_level(
 	template: DrawTemplate,
 	depth_left: int
 ):
+	"""Draw labyrinth's level with all inner levels."""
 	if not depth_left:
 		return
 
@@ -60,6 +65,9 @@ def draw_template(
 	depth: int = 1,  # last level to draw
 	marker: Optional[tuple[int, int]] = None  # start and end nodes index
 ):
+	"""Draw `logic_template` on the `canvas` with given `depth`.
+	If `marker` is passed, mark start and finish respectively.
+	"""
 	# For some reason it gives values 1 higher from each side (so height and
 	# width are both 2 pixels larger) than you request upon creating the canvas,
 	# even if you set border width to zero... Apparently I'm missing something.
@@ -91,6 +99,9 @@ def draw_template(
 
 
 def show(drawer: Drawer_T, *args, **kwargs) -> None:
+	"""Show `drawer` result on the screen.
+	`args` and `kwargs` will be passed to `drawer`.
+	"""
 	main_window = tkinter.Tk()
 	canvas = tkinter.Canvas(main_window, bg="white", height=MAX_H, width=MAX_W, borderwidth=0)
 	main_window.update()
@@ -100,11 +111,6 @@ def show(drawer: Drawer_T, *args, **kwargs) -> None:
 	drawer(canvas, *args, **kwargs)
 
 	main_window.mainloop()
-
-
-def test_draw(canvas: tkinter.Canvas, x1: float, y1: float, x2: float, y2: float, fill: str) -> None:
-	rect = RectTemplate(Pos(x1, y1), Pos(x2, y2))
-	canvas.create_line(*rect, fill=fill)
 
 
 def main():

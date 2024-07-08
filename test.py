@@ -1,3 +1,8 @@
+"""Module to generate different tests for
+https://acm.timus.ru/problem.aspx?space=1&num=1623
+"""
+
+
 from collections import namedtuple
 from typing import Type, NamedTuple, Iterable
 

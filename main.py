@@ -1,7 +1,9 @@
 """
 https://acm.timus.ru/problem.aspx?space=1&num=1623
 
-'Compiled' version for timus: all in one file
+'Compiled' version for timus: all in one file.
+
+UPDATE: still too slow, only c++ solution worked.
 """
 import dataclasses
 from typing import Iterable, NamedTuple
@@ -202,9 +204,12 @@ class DistMatrix:
 		for node1, node2 in self._template.all_links():
 			node1_index = self._get_node_index(*node1)
 			node2_index = self._get_node_index(*node2)
-			self._add_road(node1_index, node2_index, updated_outer_links)
+			self._set(node1_index, node2_index, dist=1)
+			if self._is_outer_node(node1_index) and self._is_outer_node(node2_index):
+				updated_outer_links.add((node1_index, node2_index))
 
 		# Eventually `self._data` will 'converge' to final value.
+		self._update(updated_outer_links)
 		while updated_outer_links:
 			self._update(updated_outer_links)
 
@@ -216,100 +221,42 @@ class DistMatrix:
 		This method pops one link from `updated_outer_links` and uses it to
 		update mentioned inner links.
 		"""
-		node1_index, node2_index = updated_outer_links.pop()
-		dist = self._get(node1_index, node2_index)
-		door1, door2 = self._get_outer_node_door(node1_index), self._get_outer_node_door(node2_index)
-		for room in range(1, self._template.rooms + 1):
-			inner_node1_index = self._get_node_index(room, door1)
-			inner_node2_index = self._get_node_index(room, door2)
-			self._add_road(inner_node1_index, inner_node2_index, updated_outer_links, dist)
+		for node1_index, node2_index in updated_outer_links:
+			dist = self._get(node1_index, node2_index)
+			door1, door2 = self._get_outer_node_door(node1_index), self._get_outer_node_door(node2_index)
+			for room in range(1, self._template.rooms + 1):
+				inner_node1_index = self._get_node_index(room, door1)
+				inner_node2_index = self._get_node_index(room, door2)
+				self._set(inner_node1_index, inner_node2_index, dist)
 
-	def _add_road(
-		self,
-		node1_index: int,
-		node2_index: int,
-		updated_outer_links: _UpdatedLinks_T,
-		length: int = 1
-	):
-		"""Update labyrinth with new road. Update distances if needed.
-		Return value indicates if new road made a difference.
-		"""
-		cur_dist = self._get(node1_index, node2_index)
-		if cur_dist is not None and cur_dist <= length:
-			return
+		updated_outer_links.clear()
+		self._floyd_warshall(updated_outer_links)
 
-		self._set(node1_index, node2_index, length)
-		if self._is_outer_node(node1_index) and self._is_outer_node(node2_index):
-			updated_outer_links.add((node1_index, node2_index))
-
-		self._propagate(node1_index, node2_index, updated_outer_links, length)
-
-	def _propagate(self, node1_index: int, node2_index: int, updated_outer_links: _UpdatedLinks_T, length: int):
-		"""Propagate changes in `self._data` after calling
-		self._set(node1_index, node2_index, length).
-
-		Let's denote:
-		a, b = node1_index, node2_index
-		W[i, j] = self._get(i, j)
-		Then general algorithm goes like this:
-		for each node pair (i, j):
-		    W[i, j] = min(
-		        W[i, j],
-		        W[i, a] + W[a, b] + W[b, j],
-		        W[i, b] + W[b, a] + W[a, j]
-		    )
-		Obviously, W[a, b] == W[b, a] == length.
-		We will check two new possible paths from i to j in two separate steps.
-
-		Imagine two sets of nodes (possibly intersecting):
-		A: node a and all nodes connected to it except b.
-		B: node b and all nodes connected to it except a.
-		We will iterate through each pair of nodes:
-		(i from A, j from B)
-		Except for (a, b), obviously, because it should have been
-		updated before call of this method.
-		On each such iteration we will check new possible path from i to j:
-		i -> a -> b -> j
-		If i is also connected to b and j is connected to a, then at some point
-		we will also check:
-		j -> a -> b -> i
-		which is just reversed:
-		i -> b -> a -> j
-		thus, completing above algorithm.
-		Keep in mind, we will also hit, for example, pair (a, j), checking path:
-		a -> a -> b -> j
-		Since `self._get(a, a) == 0` we're OK.
-		"""
-		# Iterate through A:
-		for node_i_index in range(self._total_nodes):
-			if node_i_index == node2_index:
-				continue
-			if (left_dist := self._get(node_i_index, node1_index)) is None:
-				# No (i, a) connection
-				continue
-
-			i_is_outer = self._is_outer_node(node_i_index)
-			# Iterate through B:
-			for node_j_index in range(self._total_nodes):
-				if (
-					node_j_index == node1_index
-					# Exclude (a, b) pair.
-					or node_i_index == node1_index and node_j_index == node2_index
-				):
+	def _floyd_warshall(self, updated_outer_links: _UpdatedLinks_T):
+		"""Recalculate `self._data` using Floyd-Warshall algorithm."""
+		for bridge_index in range(self._total_nodes):
+			for node_i_index in range(self._total_nodes - 1):
+				if node_i_index == bridge_index:
 					continue
-				if (right_dist := self._get(node2_index, node_j_index)) is None:
-					# No (j, b) connection
+				if (left_dist := self._get(node_i_index, bridge_index)) is None:
 					continue
 
-				# We can go node_i <-> node1 <-> node2 <-> node_j.
-				dist = left_dist + length + right_dist
-				cur_dist = self._get(node_i_index, node_j_index)
-				if cur_dist is not None and cur_dist <= dist:
-					continue
+				i_is_outer = self._is_outer_node(node_i_index)
+				for node_j_index in range(node_i_index + 1, self._total_nodes):
+					if node_j_index == bridge_index:
+						continue
+					if (right_dist := self._get(bridge_index, node_j_index)) is None:
+						continue
 
-				self._set(node_i_index, node_j_index, dist)
-				if i_is_outer and self._is_outer_node(node_j_index):
-					updated_outer_links.add((node_i_index, node_j_index))
+					# We can go node_i <-> bridge <-> node_j.
+					dist = left_dist + right_dist
+					cur_dist = self._get(node_i_index, node_j_index)
+					if cur_dist is not None and cur_dist <= dist:
+						continue
+
+					self._set(node_i_index, node_j_index, dist)
+					if i_is_outer and self._is_outer_node(node_j_index):
+						updated_outer_links.add((node_i_index, node_j_index))
 
 
 def main():

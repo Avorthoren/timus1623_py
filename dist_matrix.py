@@ -302,14 +302,14 @@ def main():
 	import time
 	import draw
 
-	print("Input:")
+	print("INPUT:")
 	template, start, finish = test.get_hard_test(rooms=5, doors=20)
 	print()
 
 	time0 = time.perf_counter()
 	dist_matrix = DistMatrix(template)
 	time1 = time.perf_counter()
-	print()
+	print("OUTPUT:")
 	print(f"Real complexity: {dist_matrix.counter:_}")
 	print()
 
