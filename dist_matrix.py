@@ -16,7 +16,7 @@ import os
 from template import Template, NodeIndex
 import test
 
-type _Data_T = list[int | None]
+type _Data_T = list[list[int | None]]
 type _Locations_T = [list[list[int]]]
 type _UpdatedLinks_T = set[tuple[int, int]]
 
@@ -45,11 +45,7 @@ class DistMatrix:
 		self._template = template
 		self._total_nodes = total_nodes = (template.rooms + 1) * template.doors
 
-		self._data: _Data_T = [None] * (total_nodes * (total_nodes - 1) >> 1)
-
-		# Turns out, caching here doesn't make a difference in speed,
-		# but only uses more memory.
-		# self._LOCATION: _Locations_T = self._prepare_locations()
+		self._data: _Data_T = self._get_empty_matrix()
 
 		# Calculate all distances:
 		self._counter = 0
@@ -98,58 +94,25 @@ class DistMatrix:
 
 	def _get(self, node1_index: int, node2_index: int) -> int | None:
 		"""Get the shortest path length between two nodes."""
-		if node1_index == node2_index:
-			return 0
-		return self._data[self._get_location(node1_index, node2_index)]
+		if node1_index < node2_index:
+			return self._data[node1_index][node2_index]
+		else:
+			return self._data[node2_index][node1_index]
 
 	def _set(self, node1_index: int, node2_index: int, dist: int):
-		self._data[self._get_location(node1_index, node2_index)] = dist
+		if node1_index < node2_index:
+			self._data[node1_index][node2_index] = dist
+		else:
+			self._data[node2_index][node1_index] = dist
 
-	# def _prepare_locations(self) -> _Locations_T:
-	# 	"""Prepare indices of `self._data` elements for each pair of
-	# 	DISTINCT node indices.
-	#
-	# 	NOTE: Turns out, it doesn't make a difference in speed,
-	# 	but only uses more memory.
-	# 	"""
-	# 	return [[
-	# 		self._get_location(node1_index, node2_index)
-	# 		for node2_index in range(self._total_nodes)
-	# 	] for node1_index in range(self._total_nodes)]
+	def _get_empty_matrix(self) -> _Data_T:
+		n = self._total_nodes
+		data: _Data_T = [[None] * n for _ in range(n)]
+		for i in range(n):
+			i: int
+			data[i][i] = 0
 
-	def _get_location(self, node1_index: int, node2_index: int) -> int:
-		"""Get index of respective element in `self._data`"""
-		if node1_index > node2_index:
-			node2_index, node1_index = node1_index, node2_index
-
-		# Let's assume for simplicity `self._total_nodes == 10`.
-		# Then `self._data` is flat representation of upper triangle of
-		# 10x10 matrix (excluding main diagonal).
-		# Let's denote:
-		# i, j = node1_index, node2_index
-		# Let's call that 10x10 matrix: T. Then we are looking for index of
-		# element T[i][j] in `self._data`. For the sake of example let's set
-		# i, j = 4, 7
-		# Let's draw first 6 rows of T:
-		#     0  1  2  3  4  5  6  j  8  9
-		#     ----------------------------
-		# 0 | a  x  x  x  x  x  x  x  x  x | elements of `self._data` denoted 'x'
-		# 1 | a  a  x  x  x  x  x  x  x  x | we read the left to right,
-		# 2 | a  a  a  x  x  x  x  x  x  x | top to bottom.
-		# 3 | a  a  a  a  x  x  x  x  x  x |
-		# i | a  a  a  a  a  b  b  !  x  x | 'b's are last two elements of
-		# 5 | a  a  a  a  a  a  x  x  x  x | `self._data` before T[i][j]
-		# ..................................
-		return (
-			# Number of elements in first `i` rows of T:
-			self._total_nodes * node1_index
-			# Minus number of those not belonging to upper triangle
-			# (denoted 'a')
-			- (node1_index * (node1_index + 1) >> 1)
-			# Plus number of elements in upper triangle in the i-th row before
-			# T[i][j] (denoted 'b')
-			+ (node2_index - node1_index - 1)
-		)
+		return data
 
 	def get_complexity(self) -> int:
 		rooms, doors, nodes = self._template.rooms, self._template.doors, self._total_nodes
@@ -168,6 +131,58 @@ class DistMatrix:
 		3. For each created inner link:
 		3.1. set new W
 		3.2. recalculate all W, adding needed links to set
+
+		Всего TOTAL_NODES = (ROOMS + 1) * DOORS нод.
+		Я храню квадратную матрицу "расстояний", но использую только половину:
+		W[i, j] для i <= j.
+		Инициирую её "бесконечными" значениями, а главную диагональ - нулями.
+
+		Также я храню множество U пар дверей внешней комнаты, "расстояние"
+		между которыми было обновлено. Изначально оно пусто.
+
+		ВЕСЬ_АЛГОРИТМ:
+			Для всёх ребёр (a, b) из входящих данных:
+				ДОБАВИТЬ_ДОРОГУ(a, b, 1)  # длина 1
+
+			Пока U не пусто:
+				ОБНОВИТЬ()
+
+		=============================================
+		ОБНОВИТЬ():
+			Изъять любой элемент (a, b) из U
+			Для каждой внутренней комнаты (всего их ROOMS):
+				Взять соответствующую пару дверей (i, j)
+				ДОБАВИТЬ_ДОРОГУ(i, j, W[a, b])
+
+		=============================================
+		ДОБАВИТЬ_ДОРОГУ(a, b, dist):
+			Если W[a, b] <= dist:
+				Выйти
+
+			W[a, b] = dist
+			Если (a, b) пара внешних дверей:
+				Добавить (a, b) в U
+
+			РАСПРОСТРАНИТЬ(a, b, dist)
+
+		=============================================
+		РАСПРОСТРАНИТЬ(a, b, dist):
+			Для всех нод i кроме b:
+				Если W[i, a] "бесконечна":
+					Перейти к следующей i
+				Для всех нод j кроме a:
+					Если (i, j) == (a, b):
+						Перейти к следующей j
+					Если W[b, j] "бесконечна":
+						Перейти к следующей j
+
+					ij_dist = W[i, a] + dist + W[b, j]
+					Если W[i, j] <= ij_dist:
+						Перейти к следующей j
+
+					W[i, j] = ij_dist
+					Если (i, j) пара внешних дверей:
+						Добавить (i, j) в U
 		"""
 		if LOG:
 			print("ANALYZING...")
@@ -221,7 +236,7 @@ class DistMatrix:
 		"""
 		cur_dist = self._get(node1_index, node2_index)
 		if cur_dist is not None and cur_dist <= length:
-			self._counter += 1
+			# self._counter += 1
 			return
 
 		if LOG:
@@ -273,33 +288,31 @@ class DistMatrix:
 		# Iterate through A:
 		for node_i_index in range(self._total_nodes):
 			if node_i_index == node2_index:
-				self._counter += 1
+				# self._counter += 1
 				continue
 			if (left_dist := self._get(node_i_index, node1_index)) is None:
 				# No (i, a) connection
-				self._counter += 1
+				# self._counter += 1
 				continue
 
 			i_is_outer = self._is_outer_node(node_i_index)
 			# Iterate through B:
 			for node_j_index in range(self._total_nodes):
+				# self._counter += 1
 				if (
 					node_j_index == node1_index
 					# Exclude (a, b) pair.
 					or node_i_index == node1_index and node_j_index == node2_index
 				):
-					self._counter += 1
 					continue
 				if (right_dist := self._get(node2_index, node_j_index)) is None:
 					# No (j, b) connection
-					self._counter += 1
 					continue
 
 				# We can go node_i <-> node1 <-> node2 <-> node_j.
 				dist = left_dist + length + right_dist
 				cur_dist = self._get(node_i_index, node_j_index)
 				if cur_dist is not None and cur_dist <= dist:
-					self._counter += 1
 					continue
 
 				self._set(node_i_index, node_j_index, dist)
