@@ -18,21 +18,34 @@ import test
 
 type _Data_T = list[int | None]
 type _Locations_T = [list[list[int]]]
+type _UpdatedLinks_T = set[tuple[int, int]]
 
 
 LOG = bool(int(os.environ.get('LOG', '0')))
 
 
 class DistMatrix:
-	__slots__ = '_template', '_total_nodes', '_data',  '_counter',  # '_LOCATION'
+	__slots__ = (
+		# : Template
+		# Input description of the labyrinth.
+		'_template',
+		# : int
+		# Convenience const for total number of outer and inner template doors.
+		'_total_nodes',
+		# : _Data_T
+		# Flat version of one 'half' of square matrix of `_total_nodes` size,
+		# except for main diagonal.
+		'_data',
+		# : int
+		# For debugging: calculates 'real complexity'
+		'_counter'
+	)
 
 	def __init__(self, template: Template):
 		self._template = template
-		# Get index of the last node.
-		self._total_nodes = self._get_node_index(template.rooms + 1, template.doors)
-		# Flat version of one 'half' of square matrix of `_total_nodes` size,
-		# except for main diagonal.
-		self._data: _Data_T = [None] * (self._total_nodes * (self._total_nodes - 1) >> 1)
+		self._total_nodes = total_nodes = (template.rooms + 1) * template.doors
+
+		self._data: _Data_T = [None] * (total_nodes * (total_nodes - 1) >> 1)
 
 		# Turns out, caching here doesn't make a difference in speed,
 		# but only uses more memory.
@@ -51,11 +64,23 @@ class DistMatrix:
 		return self._get(self._get_node_index(*node1), self._get_node_index(*node2))
 
 	def _get_node_index(self, room: int, door: int) -> int:
+		"""Enumerates all doors from 0 to `self._total_nodes - 1`."""
 		return room * self._template.doors + door
 
 	def _reverse_get_node_index(self, node_index: int) -> NodeIndex:
+		# WARNING: Has to comply with `_get_node_index`
 		room, door = divmod(node_index, self._template.doors)
 		return NodeIndex(room, door)
+
+	def _is_outer_node(self, node_index: int) -> bool:
+		# Has to comply with `_get_node_index`
+		return node_index < self._template.doors
+
+	@staticmethod
+	def _get_outer_node_door(node_index: int) -> int:
+		"""Get door-index of the node considering it's outer node."""
+		# WARNING: Has to comply with `_get_node_index`
+		return node_index
 
 	def count_defined(self):
 		return sum(int(value is not None) for value in self._data)
@@ -128,20 +153,33 @@ class DistMatrix:
 
 	def get_complexity(self) -> int:
 		rooms, doors, nodes = self._template.rooms, self._template.doors, self._total_nodes
-		return (doors - 2) * doors * (doors - 1) // 2 * rooms * nodes ** 3
+		return (doors - 2) * doors * (doors - 1) // 2 * rooms * nodes ** 2
 
 	def _fill(self):
-		"""Fill `self._data` with proper values."""
+		"""Fill `self._data` with proper values.
+
+		For all explicit links:
+		1. set new W
+		2. add link to set
+		3. recalculate all W, adding needed links to set
+		While set:
+		1. Pop link
+		2. Create inner links from it
+		3. For each created inner link:
+		3.1. set new W
+		3.2. recalculate all W, adding needed links to set
+		"""
 		if LOG:
 			print("ANALYZING...")
 			print(f"Estimated complexity: {self.get_complexity():_}")
 			print("Adding explicit links...")
 
+		updated_outer_links: _UpdatedLinks_T = set()
 		# Add template explicit links.
 		for node1, node2 in self._template.all_links():
 			node1_index = self._get_node_index(*node1)
 			node2_index = self._get_node_index(*node2)
-			self._add_road(node1_index, node2_index, length=1)
+			self._add_road(node1_index, node2_index, updated_outer_links)
 
 		if LOG:
 			print("Explicit links added")
@@ -151,137 +189,122 @@ class DistMatrix:
 			print()
 			print("Analyzing recursively...")
 
-		# Take into consideration implicit 'recursive' links.
-		# Will go for maximum of `self._template.doors - 2` iterations, I hope.
-		# Complexity: DOORS - 2
-		# Inner complexity: DOORS * (DOORS - 1) / 2 * ROOMS * NODES * NODES * NODES
-		# Total complexity: (DOORS - 2) * DOORS * (DOORS - 1) / 2 * ROOMS * NODES * NODES * NODES
-		# NODES = (ROOMS + 1) * NODES
-		depth = 1
-		while self._update():
-			depth += 1
-			if LOG:
-				print(f'Depth {depth} done')
-				print()
+		# Eventually `self._data` will 'converge' to final value.
+		while updated_outer_links:
+			self._update(updated_outer_links)
 
-	def _add_road(self, node1_index: int, node2_index: int, length: int, recursion_depth: int = 0) -> bool:
+	def _update(self, updated_outer_links: _UpdatedLinks_T):
+		"""Update `self._data` using recursive knowledge.
+
+		If there is path (0, a) <-> (0, b), then there are paths
+		(room, a) <-> (room, b) for every inner room.
+		This method pops one link from `updated_outer_links` and uses it to
+		update mentioned inner links.
+		"""
+		node1_index, node2_index = updated_outer_links.pop()
+		dist = self._get(node1_index, node2_index)
+		door1, door2 = self._get_outer_node_door(node1_index), self._get_outer_node_door(node2_index)
+		for room in range(1, self._template.rooms + 1):
+			inner_node1_index = self._get_node_index(room, door1)
+			inner_node2_index = self._get_node_index(room, door2)
+			self._add_road(inner_node1_index, inner_node2_index, updated_outer_links, dist)
+
+	def _add_road(
+		self,
+		node1_index: int,
+		node2_index: int,
+		updated_outer_links: _UpdatedLinks_T,
+		length: int = 1
+	):
 		"""Update labyrinth with new road. Update distances if needed.
 		Return value indicates if new road made a difference.
 		"""
 		cur_dist = self._get(node1_index, node2_index)
 		if cur_dist is not None and cur_dist <= length:
 			self._counter += 1
-			return False
+			return
 
 		if LOG:
 			node1, node2 = self._reverse_get_node_index(node1_index), self._reverse_get_node_index(node2_index)
-			pad = '\t' * recursion_depth
-			print(f'{pad}dist({node1}, {node2}) = {length} <- {cur_dist}')
+			print(f'dist({node1}, {node2}) = {length} <- {cur_dist}')
 
 		self._set(node1_index, node2_index, length)
-		self._propagate(node1_index, node2_index, length, recursion_depth)
+		if self._is_outer_node(node1_index) and self._is_outer_node(node2_index):
+			updated_outer_links.add((node1_index, node2_index))
 
-		return True
+		self._propagate(node1_index, node2_index, updated_outer_links, length)
 
-	def _propagate(self, node1_index: int, node2_index: int, length: int, recursion_depth: int = 0):
+	def _propagate(self, node1_index: int, node2_index: int, updated_outer_links: _UpdatedLinks_T, length: int):
 		"""Propagate changes in `self._data` after calling
 		self._set(node1_index, node2_index, length).
 
+		Let's denote:
+		a, b = node1_index, node2_index
+		W[i, j] = self._get(i, j)
+		Then general algorithm goes like this:
+		for each node pair (i, j):
+		    W[i, j] = min(
+		        W[i, j],
+		        W[i, a] + W[a, b] + W[b, j],
+		        W[i, b] + W[b, a] + W[a, j]
+		    )
+		Obviously, W[a, b] == W[b, a] == length.
+		We will check two new possible paths from i to j in two separate steps.
+
 		Imagine two sets of nodes (possibly intersecting):
-		A: node1 and all nodes connected to it except node2.
-		B: node2 and all nodes connected to it except node1.
-		This method updates distances for each pair of nodes:
-		(node_i from A, node_j from B)
-		Except for (node1, node2), obviously, because it should have been
+		A: node a and all nodes connected to it except b.
+		B: node b and all nodes connected to it except a.
+		We will iterate through each pair of nodes:
+		(i from A, j from B)
+		Except for (a, b), obviously, because it should have been
 		updated before call of this method.
+		On each such iteration we will check new possible path from i to j:
+		i -> a -> b -> j
+		If i is also connected to b and j is connected to a, then at some point
+		we will also check:
+		j -> a -> b -> i
+		which is just reversed:
+		i -> b -> a -> j
+		thus, completing above algorithm.
+		Keep in mind, we will also hit, for example, pair (a, j), checking path:
+		a -> a -> b -> j
+		Since `self._get(a, a) == 0` we're OK.
 		"""
 		# Iterate through A:
-		# Complexity: NODES * NODES * NODES
-		to_propagate = []
 		for node_i_index in range(self._total_nodes):
 			if node_i_index == node2_index:
 				self._counter += 1
 				continue
 			if (left_dist := self._get(node_i_index, node1_index)) is None:
-				# No connection
+				# No (i, a) connection
 				self._counter += 1
 				continue
 
+			i_is_outer = self._is_outer_node(node_i_index)
 			# Iterate through B:
-			# NOTE: we can't exclude symmetric cases by starting `node_j_index`
-			# from `node_i_index + 1`, because nested loop is not symmetrical
-			# by its nature. Suppose node1 is only connected to node with
-			# index 10, while node2 only to node with index 1.
 			for node_j_index in range(self._total_nodes):
 				if (
 					node_j_index == node1_index
-					# Exclude (node1, node2) pair.
+					# Exclude (a, b) pair.
 					or node_i_index == node1_index and node_j_index == node2_index
 				):
 					self._counter += 1
 					continue
 				if (right_dist := self._get(node2_index, node_j_index)) is None:
-					# No connection
+					# No (j, b) connection
 					self._counter += 1
 					continue
+
 				# We can go node_i <-> node1 <-> node2 <-> node_j.
 				dist = left_dist + length + right_dist
 				cur_dist = self._get(node_i_index, node_j_index)
 				if cur_dist is not None and cur_dist <= dist:
 					self._counter += 1
 					continue
+
 				self._set(node_i_index, node_j_index, dist)
-				to_propagate.append((node_i_index, node_j_index, dist, recursion_depth + 1))
-
-		for args in to_propagate:
-			self._propagate(*args)
-
-	def _update(self) -> bool:
-		"""Update `self._data` using recursive knowledge.
-
-		If there is path (0, i) <-> (0, j), then there are paths
-		(room, i) <-> (room, j) for every inner room.
-		"""
-		# Go through distances for each unordered pair of nodes from outer room.
-		# Using them generate new 'roads' for each inner room.
-		# Complexity: DOORS * (DOORS - 1) / 2 * ROOMS
-		# Inner complexity: NODES * NODES * NODES
-		# Total complexity: DOORS * (DOORS - 1) / 2 * ROOMS * NODES * NODES * NODES
-		updated = False
-		to_propagate = []
-		for door1 in range(self._template.doors - 1):
-			node1_index = self._get_node_index(room=0, door=door1)
-			for door2 in range(door1 + 1, self._template.doors):
-				node2_index = self._get_node_index(room=0, door=door2)
-				if (dist := self._get(node1_index, node2_index)) is None:
-					self._counter += 1
-					continue
-
-				if LOG:
-					node1 = self._reverse_get_node_index(node1_index)
-					node2 = self._reverse_get_node_index(node2_index)
-					print(f"Processing {node1} <-> {node2}")
-
-				for room in range(1, self._template.rooms + 1):
-					inner_node1_index = self._get_node_index(room, door1)
-					inner_node2_index = self._get_node_index(room, door2)
-					cur_dist = self._get(inner_node1_index, inner_node2_index)
-					if cur_dist is not None and cur_dist <= dist:
-						self._counter += 1
-						continue
-					self._set(inner_node1_index, inner_node2_index, dist)
-					to_propagate.append((inner_node1_index, inner_node2_index, dist))
-					updated = True
-					if LOG:
-						node1 = self._reverse_get_node_index(inner_node1_index)
-						node2 = self._reverse_get_node_index(inner_node2_index)
-						print(f'dist({node1}, {node2}) = {dist} <- {cur_dist}')
-						print(f"Total defined: {self.count_defined()}")
-
-		for args in to_propagate:
-			self._propagate(*args)
-
-		return updated
+				if i_is_outer and self._is_outer_node(node_j_index):
+					updated_outer_links.add((node_i_index, node_j_index))
 
 
 def main():
@@ -290,7 +313,7 @@ def main():
 	import draw
 
 	print("Input:")
-	template, start, finish = test.get_hard_test(rooms=5, doors=6)
+	template, start, finish = test.get_hard_test(rooms=5, doors=20)
 	print()
 
 	time0 = time.perf_counter()
